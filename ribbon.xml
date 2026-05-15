@@ -1,0 +1,18 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui" onLoad="RibbonOnLoad">
+  <ribbon>
+    <tabs>
+      <tab idMso="TabReview">
+        <group id="grpClientExport" label="Client Export">
+          <button
+            id="btnClientExport"
+            label="Create Client Export"
+            size="large"
+            imageMso="FileSaveAsExcelXlsx"
+            screentip="Create a sanitized client export"
+            supertip="Opens export settings for grouped rows, hidden rows, images, and charts, then creates a scrubbed client-safe workbook copy."
+            onAction="RunClientExportFromRibbon"/>
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>
