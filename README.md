@@ -193,6 +193,33 @@ The cleaned workbook will be created in the same folder as the original file.
 
 ---
 
+# Updating from a Previous Version
+
+If you already have an older version installed, follow these steps before installing the new `.xlam`:
+
+## Windows
+
+1. Open **Excel**.
+2. Go to **File → Options → Add-ins**.
+3. At the bottom: **Manage: Excel Add-ins → Go**.
+4. Uncheck **ClientExportTool** and click **OK**.
+5. Replace the old `.xlam` file on your computer with the new one (keep it in the same location).
+6. Re-open the Add-ins dialog, check **ClientExportTool**, and click **OK**.
+7. Fully quit and reopen Excel.
+
+## Mac
+
+1. Open **Excel**.
+2. Go to **Tools → Excel Add-ins**.
+3. Uncheck **ClientExportTool** and click **OK**.
+4. Replace the old `.xlam` file with the new one (keep it in the same location).
+5. Re-open **Tools → Excel Add-ins**, check **ClientExportTool**, and click **OK**.
+6. Fully quit and reopen Excel.
+
+> **Important:** Always fully quit and reopen Excel after updating. Excel caches add-ins in memory and will continue running the old version until it is restarted.
+
+---
+
 # Support
 
 If you encounter issues or have questions about this tool, please contact the developer.

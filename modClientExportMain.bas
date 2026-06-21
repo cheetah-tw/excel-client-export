@@ -63,7 +63,16 @@ Public Sub CreateClientExportWithOptions(ByRef opts As ExportOptions)
         Err.Raise vbObjectError + 1002, , "Please save the source workbook first before creating a client export."
     End If
 
-    outPath = srcWb.Path & "\" & FileBaseName(srcWb.Name) & "_CLIENT_EXPORT.xlsx"
+    Dim localPath As String
+    localPath = ResolveLocalPath(srcWb.Path)
+
+    If Len(localPath) = 0 Then
+        Err.Raise vbObjectError + 1003, , _
+            "Could not resolve a local file path for this workbook." & vbCrLf & _
+            "If the file is stored in OneDrive, try opening it directly from File Explorer rather than from the OneDrive website."
+    End If
+
+    outPath = localPath & "\" & FileBaseName(srcWb.Name) & "_CLIENT_EXPORT.xlsx"
 
     If Len(Dir(outPath)) > 0 Then
         Kill outPath
@@ -107,12 +116,16 @@ Public Sub CreateClientExportWithOptions(ByRef opts As ExportOptions)
     Exit Sub
 
 CleanFail:
+    Dim errNum As Long
+    Dim errDesc As String
+    errNum = Err.Number
+    errDesc = Err.Description
     On Error Resume Next
     If Not outWb Is Nothing Then outWb.Close False
     Application.EnableEvents = True
     Application.DisplayAlerts = True
     Application.ScreenUpdating = True
-    MsgBox "Client export failed:" & vbCrLf & Err.Description, vbExclamation
+    MsgBox "Client export failed:" & vbCrLf & "Error " & errNum & ": " & errDesc, vbExclamation
 End Sub
 
 '=========================================================
@@ -359,7 +372,7 @@ Private Sub ApplyDataAction(ByVal rng As Range, ByVal dataAction As eDataAction)
     On Error Resume Next
     Select Case dataAction
         Case daClear
-            rng.ClearContents
+            rng.Clear
         Case daFlatten
             rng.Value = rng.Value
     End Select
@@ -389,8 +402,7 @@ End Sub
 Private Sub DeleteOutsidePrintableArea_OneSheet(ByVal ws As Worksheet, ByVal imagePolicy As eObjectPolicy, ByVal chartPolicy As eObjectPolicy)
     Dim pr As String
     Dim pa As Range
-    Dim firstRow As Long, lastRow As Long
-    Dim firstCol As Long, lastCol As Long
+    Dim ar As Range
     Dim hasPrintArea As Boolean
     Dim i As Long
     Dim shp As Shape
@@ -404,18 +416,18 @@ Private Sub DeleteOutsidePrintableArea_OneSheet(ByVal ws As Worksheet, ByVal ima
 
     If hasPrintArea Then
         Set pa = ws.Range(pr)
-        firstRow = pa.Row
-        firstCol = pa.Column
-        lastRow = pa.Row + pa.Rows.Count - 1
-        lastCol = pa.Column + pa.Columns.Count - 1
 
-        If lastRow < ws.Rows.Count Then
-            ws.Rows((lastRow + 1) & ":" & ws.Rows.Count).Delete
-        End If
+        ' Step 1: Clear all cells not covered by any print area.
+        '         This handles orphan cells that sit at the intersection of
+        '         a kept row and a kept column but belong to neither area
+        '         (only possible when areas are offset in both dimensions).
+        ClearCellsOutsidePrintAreas ws, pa
 
-        If lastCol < ws.Columns.Count Then
-            ws.Columns(ColLetter(lastCol + 1) & ":" & ColLetter(ws.Columns.Count)).Delete
-        End If
+        ' Step 2 & 3: Delete every row / column not covered by any print area.
+        '             Operating on whole rows/cols (not bounding box) means this
+        '             works correctly for stacked, side-by-side, and offset layouts.
+        DeleteUncoveredRows ws, pa
+        DeleteUncoveredCols ws, pa
     End If
 
     For i = ws.Shapes.Count To 1 Step -1
@@ -432,7 +444,16 @@ Private Sub DeleteOutsidePrintableArea_OneSheet(ByVal ws As Worksheet, ByVal ima
             If tl Is Nothing Then
                 outside = True
             Else
-                outside = (tl.Row < firstRow) Or (tl.Row > lastRow) Or (tl.Column < firstCol) Or (tl.Column > lastCol)
+                outside = True
+                For Each ar In pa.Areas
+                    If tl.Row >= ar.Row And _
+                       tl.Row <= ar.Row + ar.Rows.Count - 1 And _
+                       tl.Column >= ar.Column And _
+                       tl.Column <= ar.Column + ar.Columns.Count - 1 Then
+                        outside = False
+                        Exit For
+                    End If
+                Next ar
             End If
         End If
 
@@ -447,6 +468,135 @@ Private Sub DeleteOutsidePrintableArea_OneSheet(ByVal ws As Worksheet, ByVal ima
 
         If deleteIt Then shp.Delete
         Set tl = Nothing
+    Next i
+End Sub
+
+'=========================================================
+' Clear cells that are not inside any print area
+'=========================================================
+Private Sub ClearCellsOutsidePrintAreas(ByVal ws As Worksheet, ByVal pa As Range)
+    Dim ur As Range
+    Set ur = ws.UsedRange
+    If ur Is Nothing Then Exit Sub
+
+    Dim urFirstRow As Long: urFirstRow = ur.Row
+    Dim urLastRow  As Long: urLastRow  = ur.Row + ur.Rows.Count - 1
+    Dim urFirstCol As Long: urFirstCol = ur.Column
+    Dim urLastCol  As Long: urLastCol  = ur.Column + ur.Columns.Count - 1
+
+    Dim r As Long
+    Dim ar As Range
+
+    For r = urFirstRow To urLastRow
+        ' Build the union of column ranges that any print area covers on this row
+        Dim coveredCols As Range
+        Set coveredCols = Nothing
+
+        For Each ar In pa.Areas
+            If r >= ar.Row And r <= ar.Row + ar.Rows.Count - 1 Then
+                Dim arSlice As Range
+                Set arSlice = ws.Range(ws.Cells(r, ar.Column), _
+                                       ws.Cells(r, ar.Column + ar.Columns.Count - 1))
+                If coveredCols Is Nothing Then
+                    Set coveredCols = arSlice
+                Else
+                    Set coveredCols = Union(coveredCols, arSlice)
+                End If
+            End If
+        Next ar
+
+        If coveredCols Is Nothing Then
+            ' No print area touches this row at all — clear the whole used row
+            ws.Range(ws.Cells(r, urFirstCol), ws.Cells(r, urLastCol)).Clear
+        Else
+            ' Clear column gaps: before first covered col, between covered ranges, after last
+            Dim nAr As Long: nAr = coveredCols.Areas.Count
+            Dim cF() As Long, cL() As Long
+            ReDim cF(1 To nAr), cL(1 To nAr)
+            Dim ai As Long
+            For ai = 1 To nAr
+                cF(ai) = coveredCols.Areas(ai).Column
+                cL(ai) = coveredCols.Areas(ai).Column + coveredCols.Areas(ai).Columns.Count - 1
+            Next ai
+            SortExtentPairs cF, cL, nAr
+
+            If cF(1) > urFirstCol Then
+                ws.Range(ws.Cells(r, urFirstCol), ws.Cells(r, cF(1) - 1)).Clear
+            End If
+            For ai = 1 To nAr - 1
+                If cL(ai) + 1 <= cF(ai + 1) - 1 Then
+                    ws.Range(ws.Cells(r, cL(ai) + 1), ws.Cells(r, cF(ai + 1) - 1)).Clear
+                End If
+            Next ai
+            If cL(nAr) < urLastCol Then
+                ws.Range(ws.Cells(r, cL(nAr) + 1), ws.Cells(r, urLastCol)).Clear
+            End If
+        End If
+    Next r
+End Sub
+
+'=========================================================
+' Delete every row not covered by any print area
+'=========================================================
+Private Sub DeleteUncoveredRows(ByVal ws As Worksheet, ByVal pa As Range)
+    Dim n As Long: n = pa.Areas.Count
+    Dim rF() As Long, rL() As Long
+    ReDim rF(1 To n), rL(1 To n)
+    Dim i As Long
+    For i = 1 To n
+        rF(i) = pa.Areas(i).Row
+        rL(i) = pa.Areas(i).Row + pa.Areas(i).Rows.Count - 1
+    Next i
+    SortExtentPairs rF, rL, n
+
+    ' Delete bottom-to-top so indices stay valid
+    If rL(n) < ws.Rows.Count Then
+        ws.Rows((rL(n) + 1) & ":" & ws.Rows.Count).Delete
+    End If
+    For i = n - 1 To 1 Step -1
+        If rL(i) + 1 <= rF(i + 1) - 1 Then
+            ws.Rows((rL(i) + 1) & ":" & (rF(i + 1) - 1)).Delete
+        End If
+    Next i
+End Sub
+
+'=========================================================
+' Delete every column not covered by any print area
+'=========================================================
+Private Sub DeleteUncoveredCols(ByVal ws As Worksheet, ByVal pa As Range)
+    Dim n As Long: n = pa.Areas.Count
+    Dim cF() As Long, cL() As Long
+    ReDim cF(1 To n), cL(1 To n)
+    Dim i As Long
+    For i = 1 To n
+        cF(i) = pa.Areas(i).Column
+        cL(i) = pa.Areas(i).Column + pa.Areas(i).Columns.Count - 1
+    Next i
+    SortExtentPairs cF, cL, n
+
+    ' Delete right-to-left so indices stay valid
+    If cL(n) < ws.Columns.Count Then
+        ws.Columns(ColLetter(cL(n) + 1) & ":" & ColLetter(ws.Columns.Count)).Delete
+    End If
+    For i = n - 1 To 1 Step -1
+        If cL(i) + 1 <= cF(i + 1) - 1 Then
+            ws.Columns(ColLetter(cL(i) + 1) & ":" & ColLetter(cF(i + 1) - 1)).Delete
+        End If
+    Next i
+End Sub
+
+'=========================================================
+' Sort two parallel Long arrays by the first array ascending
+'=========================================================
+Private Sub SortExtentPairs(ByRef arrF() As Long, ByRef arrL() As Long, ByVal n As Long)
+    Dim i As Long, j As Long, tmpF As Long, tmpL As Long
+    For i = 1 To n - 1
+        For j = i + 1 To n
+            If arrF(j) < arrF(i) Then
+                tmpF = arrF(i): arrF(i) = arrF(j): arrF(j) = tmpF
+                tmpL = arrL(i): arrL(i) = arrL(j): arrL(j) = tmpL
+            End If
+        Next j
     Next i
 End Sub
 
@@ -495,5 +645,77 @@ End Function
 
 Private Function ColLetter(ByVal colNum As Long) As String
     ColLetter = Split(Application.Cells(1, colNum).Address(True, False), "$")(0)
+End Function
+
+'=========================================================
+' Resolve cloud/OneDrive paths to a local file system path
+' Returns empty string if no local path can be determined
+'=========================================================
+Private Function ResolveLocalPath(ByVal wbPath As String) As String
+    ' Already a local path
+    If Left$(wbPath, 4) <> "http" Then
+        ResolveLocalPath = wbPath
+        Exit Function
+    End If
+
+    ' OneDrive Personal: https://d.docs.live.net/<cid>/...
+    ' OneDrive for Business: https://<tenant>-my.sharepoint.com/...
+    ' Try each known OneDrive environment variable and map the URL segment
+    Dim envVars(2) As String
+    envVars(0) = Environ("OneDriveCommercial")
+    envVars(1) = Environ("OneDriveConsumer")
+    envVars(2) = Environ("OneDrive")
+
+    Dim i As Long
+    Dim localRoot As String
+    Dim urlAfterRoot As String
+    Dim candidate As String
+
+    ' Strip scheme and host to get the path portion of the URL
+    ' e.g. https://d.docs.live.net/abc123/Folder/Sub -> /Folder/Sub
+    Dim urlPath As String
+    urlPath = wbPath
+    Dim slashPos As Long
+    ' Remove https://
+    If Left$(urlPath, 8) = "https://" Then urlPath = Mid$(urlPath, 9)
+    If Left$(urlPath, 7) = "http://" Then urlPath = Mid$(urlPath, 8)
+    ' Remove host (everything up to first /)
+    slashPos = InStr(urlPath, "/")
+    If slashPos > 0 Then urlPath = Mid$(urlPath, slashPos)  ' now "/Folder/Sub/..."
+
+    ' Replace forward slashes with backslashes and strip leading slash
+    urlPath = Mid$(urlPath, 2)  ' remove leading /
+    urlPath = Join(Split(urlPath, "/"), "\")
+
+    ' For each OneDrive root, try to build a candidate local path.
+    ' The URL path typically contains a folder segment that mirrors the local tree.
+    ' Strategy: walk from the deepest URL segment upward and look for a matching local folder.
+    For i = 0 To 2
+        localRoot = envVars(i)
+        If Len(localRoot) = 0 Then GoTo NextVar
+
+        ' Attempt: localRoot + last N segments of urlPath
+        Dim parts() As String
+        Dim j As Long
+        parts = Split(urlPath, "\")
+        For j = 0 To UBound(parts)
+            Dim seg As String
+            seg = parts(j)
+            Dim k As Long
+            For k = j + 1 To UBound(parts)
+                seg = seg & "\" & parts(k)
+            Next k
+            candidate = localRoot & "\" & seg
+            If Len(Dir(candidate, vbDirectory)) > 0 Then
+                ResolveLocalPath = candidate
+                Exit Function
+            End If
+        Next j
+
+NextVar:
+    Next i
+
+    ' Could not resolve
+    ResolveLocalPath = ""
 End Function
 
