@@ -1,0 +1,14 @@
+# Installers break if Git rewrites their line endings:
+# Windows batch needs CRLF, macOS/bash scripts need LF.
+*.cmd      text eol=crlf
+*.command  text eol=lf
+*.sh       text eol=lf
+
+# VBA source files must be CRLF for the VBA editor's Import to read them correctly
+*.bas      text eol=crlf
+*.frm      text eol=crlf
+*.cls      text eol=crlf
+
+# Office / VBA binaries
+*.xlam     binary
+*.frx      binary

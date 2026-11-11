@@ -1,0 +1,69 @@
+name: Release packages
+
+# Builds two downloads and attaches them to the GitHub release:
+#   ClientExportTool-<tag>-Windows.zip  (add-in + Install-Windows.cmd + README)
+#   ClientExportTool-<tag>-macOS.zip    (add-in + install-mac.command + README)
+#
+# - Publishing a release runs this automatically.
+# - "Run workflow" (Actions tab) rebuilds and re-attaches the zips for an existing release tag.
+# - Pull requests build the zips as a check (downloadable from the run page, not attached anywhere).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to rebuild the zips for (e.g. v1.2)"
+        required: true
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag || format('pr{0}', github.event.pull_request.number) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref }}
+
+      - name: Check release files
+        run: |
+          set -euo pipefail
+          for f in ClientExportTool.xlam Install-Windows.cmd install-mac.command README.md; do
+            [ -f "$f" ] || { echo "::error::Missing $f"; exit 1; }
+          done
+          # The add-in must be a valid Office package with its VBA project
+          unzip -l ClientExportTool.xlam | grep -q 'xl/vbaProject.bin' \
+            || { echo "::error::ClientExportTool.xlam has no VBA project"; exit 1; }
+          # Line endings: the Windows installer needs CRLF, the Mac installer LF
+          total=$(wc -l < Install-Windows.cmd); crlf=$(grep -c $'\r$' Install-Windows.cmd || true)
+          [ "$total" -eq "$crlf" ] || { echo "::error::Install-Windows.cmd must use CRLF line endings"; exit 1; }
+          ! grep -q $'\r' install-mac.command || { echo "::error::install-mac.command must use LF line endings"; exit 1; }
+          ! grep -qP '[^\x00-\x7F]' Install-Windows.cmd || { echo "::error::Install-Windows.cmd must be plain ASCII"; exit 1; }
+          bash -n install-mac.command
+
+      - name: Build zips
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          chmod +x install-mac.command
+          zip -X "dist/ClientExportTool-${TAG}-Windows.zip" ClientExportTool.xlam Install-Windows.cmd README.md
+          zip -X "dist/ClientExportTool-${TAG}-macOS.zip"   ClientExportTool.xlam install-mac.command README.md
+          for z in dist/*.zip; do echo "== $z"; unzip -l "$z"; done
+
+      - name: Attach to release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" dist/*.zip --clobber --repo "$GITHUB_REPOSITORY"
+
+      - name: Keep zips on the run page
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages-${{ env.TAG }}
+          path: dist/*.zip
