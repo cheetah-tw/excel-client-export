@@ -1,0 +1,6 @@
+# Office lock files (created while a workbook/add-in is open)
+~$*
+
+
+# Local build output
+dist/

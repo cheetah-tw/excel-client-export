@@ -115,57 +115,66 @@ OriginalWorkbookName_CLIENT_EXPORT.xlsx
 
 # Installation Instructions
 
+Go to the [latest release](https://github.com/cheetah-tw/excel-client-export/releases/latest) and, under **Assets**, download the zip for your computer:
+
+- **Windows:** `ClientExportTool-<version>-Windows.zip` (the add-in + `Install-Windows.cmd`)
+- **Mac:** `ClientExportTool-<version>-macOS.zip` (the add-in + `install-mac.command`)
+
+Ignore the "Source code" downloads; those are for development.
+
+Windows and macOS mark files downloaded from the internet as untrusted, and Excel refuses to load an add-in that is still marked. The installers copy the add-in to Excel's add-in folder and remove that mark for you.
+
 ## Windows
 
-1. Save `ClientExportTool.xlam` somewhere permanent on your computer.
+1. Right-click the downloaded Windows zip and choose **Extract All… → Extract**. Don't run the installer from inside the zip.
+2. In the extracted folder, double-click **`Install-Windows.cmd`**.
+   - If Windows shows **"Windows protected your PC"**, click **More info → Run anyway**.
+   - If it shows **"Open File - Security Warning"**, click **Run**.
+   - These warnings appear because the installer was downloaded. They are expected.
+3. If Excel is open, the installer asks you to close it. Save your work, close Excel, and press **Enter**.
+4. When the window says **Done!**, press any key to close it and open Excel.
 
-Recommended location:
-
-`C:\Users\YourUsername\AppData\Roaming\Microsoft\AddIns`
-
-2. Open **Excel**.
-
-3. Go to:
-
-**File → Options → Add-ins**
-
-4. At the bottom of the window:
-
-**Manage: Excel Add-ins → Go**
-
-5. Click **Browse**.
-
-6. Select `ClientExportTool.xlam`.
-
-7. Click **OK**.
-
-8. Restart Excel if prompted.
-
-After installation, the tool will appear in the Excel ribbon under:
+The tool appears in the Excel ribbon under:
 
 **Review → Client Export → Create Client Export**
+
+The installer puts the add-in in `%APPDATA%\Microsoft\AddIns` (one of Excel's trusted locations), turns it on in Excel, and removes leftover entries from earlier installs, such as one pointing at your Downloads folder.
+
+### Manual install (Windows)
+
+Only needed if you can't run the installer.
+
+1. Copy `ClientExportTool.xlam` to `C:\Users\YourUsername\AppData\Roaming\Microsoft\AddIns`.
+2. Right-click the copied file → **Properties** → tick **Unblock** at the bottom of the General tab → **OK**. (If there is no Unblock box, the file is already unblocked.)
+3. Open Excel → **File → Options → Add-ins** → **Manage: Excel Add-ins → Go**.
+4. Click **Browse**, select `ClientExportTool.xlam`, and click **OK**.
+5. Restart Excel.
 
 ---
 
 ## Mac
 
-1. Save `ClientExportTool.xlam` somewhere permanent on your computer.
+1. Open the downloaded Mac zip. Safari usually unzips it automatically; otherwise double-click it in Finder.
+2. Open **Terminal** (press **Cmd + Space**, type `Terminal`, press **Return**).
+3. Type `bash` followed by a **space**, then drag **`install-mac.command`** from Finder into the Terminal window, and press **Return**.
+   - Running it this way avoids macOS blocking the downloaded script.
+   - If macOS asks whether **Terminal** may access data from other apps, click **Allow**. (The installer needs this to put the add-in in Excel's folder.)
+4. If Excel is open, the installer asks you to quit it (**Cmd + Q**) and press **Return**.
+5. First install only: in Excel, choose **Tools → Excel Add-ins…**, tick **ClientExportTool**, and click **OK**.
 
-2. Open **Excel**.
-
-3. Go to the menu bar and select:
-
-**Tools → Excel Add-ins**
-
-4. Click **Browse**.
-
-5. Select `ClientExportTool.xlam`.
-
-6. Click **OK**.
-
-After installation, the tool will appear in the Excel ribbon under:
+The tool appears in the Excel ribbon under:
 
 **Review → Client Export → Create Client Export**
+
+### Manual install (Mac)
+
+Only needed if you can't run the installer.
+
+1. In Finder, choose **Go → Go to Folder…** and enter `~/Library/Group Containers/UBF8T346G9.Office/User Content/Add-Ins` (create the `Add-Ins` folder if it doesn't exist).
+2. Copy `ClientExportTool.xlam` into that folder.
+3. In Terminal, run:
+   `xattr -d com.apple.quarantine ~/Library/Group\ Containers/UBF8T346G9.Office/User\ Content/Add-Ins/ClientExportTool.xlam`
+4. In Excel, choose **Tools → Excel Add-ins…**, tick **ClientExportTool**, and click **OK**.
 
 ---
 
@@ -186,37 +195,45 @@ The cleaned workbook will be created in the same folder as the original file.
 
 # Notes
 
-- The `.xlam` file must remain on your computer in the same location after installation.
-- Do **not rename or move the add-in file** after installation.
+- After installation, do **not rename or move the add-in file** in Excel's add-in folder.
 - The workbook being exported must be saved first so the tool can create the export copy in the same directory.
 - If Excel blocks macros, click **Enable Content** when prompted.
+- **Mac:** Excel for Mac only writes to folders you've allowed. The first time you export from a folder, Excel asks for access to it; click **Grant Access**. For a workbook in OneDrive, Excel may also ask once for access to the `CloudStorage` folder so it can find your synced files.
 
 ---
 
 # Updating from a Previous Version
 
-If you already have an older version installed, follow these steps before installing the new `.xlam`:
+Download the new release zip for your computer and run the installer again, exactly as in the installation steps above. It replaces the old version in place.
 
-## Windows
+- **Windows:** run `Install-Windows.cmd`. Nothing else is needed; the add-in stays turned on.
+- **Mac:** run `install-mac.command`. If **ClientExportTool** is already ticked in **Tools → Excel Add-ins…**, nothing else is needed.
 
-1. Open **Excel**.
-2. Go to **File → Options → Add-ins**.
-3. At the bottom: **Manage: Excel Add-ins → Go**.
-4. Uncheck **ClientExportTool** and click **OK**.
-5. Replace the old `.xlam` file on your computer with the new one (keep it in the same location).
-6. Re-open the Add-ins dialog, check **ClientExportTool**, and click **OK**.
-7. Fully quit and reopen Excel.
+> **Important:** Excel must be fully closed while updating. Excel caches add-ins in memory and keeps running the old version until it is restarted. The installers wait for you to close Excel before continuing.
 
-## Mac
+If you installed an earlier version by hand from another folder (for example Downloads), the Windows installer cleans that up. On Mac, untick the old entry in **Tools → Excel Add-ins…** if two appear.
 
-1. Open **Excel**.
-2. Go to **Tools → Excel Add-ins**.
-3. Uncheck **ClientExportTool** and click **OK**.
-4. Replace the old `.xlam` file with the new one (keep it in the same location).
-5. Re-open **Tools → Excel Add-ins**, check **ClientExportTool**, and click **OK**.
-6. Fully quit and reopen Excel.
+---
 
-> **Important:** Always fully quit and reopen Excel after updating. Excel caches add-ins in memory and will continue running the old version until it is restarted.
+# Troubleshooting
+
+**"This file type is not supported in protected view" or "Microsoft Excel cannot access the file '…\Downloads\ClientExportTool.xlam'"** (Windows)
+The add-in was loaded directly from Downloads while Windows still marked it as downloaded. Run `Install-Windows.cmd`. It installs an unblocked copy and removes the old Downloads entry so the error stops appearing when Excel starts.
+
+**Red bar: "Microsoft has blocked macros from running because the source of this file is untrusted"**
+Same cause and same fix: run the installer for your system (or follow the manual install steps, including the Unblock / `xattr` step).
+
+**The Client Export button isn't on the Review tab**
+Check that **ClientExportTool** is ticked in the Excel Add-ins dialog (**File → Options → Add-ins → Manage: Excel Add-ins → Go** on Windows, **Tools → Excel Add-ins…** on Mac), then restart Excel.
+
+**The Windows installer says it can't find `ClientExportTool.xlam`**
+Extract the zip first, and keep `Install-Windows.cmd` in the same folder as the `.xlam`.
+
+**"Excel doesn't have permission to save in this folder"** (Mac)
+Excel asked for access to the folder and it wasn't granted. Run the export again and click **Grant Access**.
+
+**"Could not resolve a local file path for this workbook"**
+The workbook is open from OneDrive or SharePoint but the tool couldn't find its synced copy on this computer. Make sure the folder is synced (OneDrive app running, folder not set to online-only), then open the workbook from File Explorer (Windows) or Finder (Mac) and export again.
 
 ---
 

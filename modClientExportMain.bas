@@ -69,10 +69,22 @@ Public Sub CreateClientExportWithOptions(ByRef opts As ExportOptions)
     If Len(localPath) = 0 Then
         Err.Raise vbObjectError + 1003, , _
             "Could not resolve a local file path for this workbook." & vbCrLf & _
-            "If the file is stored in OneDrive, try opening it directly from File Explorer rather than from the OneDrive website."
+            "If the file is stored in OneDrive or SharePoint, make sure it is synced to this computer and open it from the synced folder (File Explorer on Windows, Finder on Mac) rather than from the OneDrive website."
     End If
 
-    outPath = localPath & "\" & FileBaseName(srcWb.Name) & "_CLIENT_EXPORT.xlsx"
+#If Mac Then
+    #If MAC_OFFICE_VERSION >= 15 Then
+    'Excel for Mac is sandboxed: it needs the user's permission (asked once per folder)
+    'to create a new file next to the source workbook.
+    If Not GrantAccessToMultipleFiles(Array(localPath)) Then
+        Err.Raise vbObjectError + 1004, , _
+            "Excel doesn't have permission to save in this folder:" & vbCrLf & localPath & vbCrLf & _
+            "Run the export again and click Grant Access when Excel asks."
+    End If
+    #End If
+#End If
+
+    outPath = localPath & Application.PathSeparator & FileBaseName(srcWb.Name) & "_CLIENT_EXPORT.xlsx"
 
     If Len(Dir(outPath)) > 0 Then
         Kill outPath
@@ -506,7 +518,7 @@ Private Sub ClearCellsOutsidePrintAreas(ByVal ws As Worksheet, ByVal pa As Range
         Next ar
 
         If coveredCols Is Nothing Then
-            ' No print area touches this row at all — clear the whole used row
+            ' No print area touches this row at all - clear the whole used row
             ws.Range(ws.Cells(r, urFirstCol), ws.Cells(r, urLastCol)).Clear
         Else
             ' Clear column gaps: before first covered col, between covered ranges, after last
@@ -650,72 +662,119 @@ End Function
 '=========================================================
 ' Resolve cloud/OneDrive paths to a local file system path
 ' Returns empty string if no local path can be determined
+' Works on Windows and Mac (uses the platform's path separator)
 '=========================================================
 Private Function ResolveLocalPath(ByVal wbPath As String) As String
+    Dim sep As String
+    sep = Application.PathSeparator
+
     ' Already a local path
-    If Left$(wbPath, 4) <> "http" Then
+    If LCase$(Left$(wbPath, 4)) <> "http" Then
         ResolveLocalPath = wbPath
         Exit Function
     End If
 
     ' OneDrive Personal: https://d.docs.live.net/<cid>/...
     ' OneDrive for Business: https://<tenant>-my.sharepoint.com/...
-    ' Try each known OneDrive environment variable and map the URL segment
-    Dim envVars(2) As String
-    envVars(0) = Environ("OneDriveCommercial")
-    envVars(1) = Environ("OneDriveConsumer")
-    envVars(2) = Environ("OneDrive")
+    ' Strip scheme and host to get the folder segments of the URL
+    ' e.g. https://d.docs.live.net/abc123/Folder/Sub -> abc123, Folder, Sub
+    Dim urlPath As String
+    Dim slashPos As Long
+    urlPath = wbPath
+    If LCase$(Left$(urlPath, 8)) = "https://" Then urlPath = Mid$(urlPath, 9)
+    If LCase$(Left$(urlPath, 7)) = "http://" Then urlPath = Mid$(urlPath, 8)
+    slashPos = InStr(urlPath, "/")
+    If slashPos = 0 Then Exit Function
+    urlPath = Mid$(urlPath, slashPos + 1)
+    If Right$(urlPath, 1) = "/" Then urlPath = Left$(urlPath, Len(urlPath) - 1)
+    If Len(urlPath) = 0 Then Exit Function
 
-    Dim i As Long
-    Dim localRoot As String
-    Dim urlAfterRoot As String
+    Dim parts() As String
+    parts = Split(urlPath, "/")
+
+    ' For each local OneDrive root, the URL path typically contains a folder
+    ' segment that mirrors the local tree. Try the longest URL suffix first,
+    ' then shorter ones, and return the first one that exists locally.
+    Dim roots As Collection
+    Set roots = OneDriveLocalRoots()
+
+    Dim root As Variant
+    Dim j As Long, k As Long
+    Dim suffix As String
     Dim candidate As String
 
-    ' Strip scheme and host to get the path portion of the URL
-    ' e.g. https://d.docs.live.net/abc123/Folder/Sub -> /Folder/Sub
-    Dim urlPath As String
-    urlPath = wbPath
-    Dim slashPos As Long
-    ' Remove https://
-    If Left$(urlPath, 8) = "https://" Then urlPath = Mid$(urlPath, 9)
-    If Left$(urlPath, 7) = "http://" Then urlPath = Mid$(urlPath, 8)
-    ' Remove host (everything up to first /)
-    slashPos = InStr(urlPath, "/")
-    If slashPos > 0 Then urlPath = Mid$(urlPath, slashPos)  ' now "/Folder/Sub/..."
-
-    ' Replace forward slashes with backslashes and strip leading slash
-    urlPath = Mid$(urlPath, 2)  ' remove leading /
-    urlPath = Join(Split(urlPath, "/"), "\")
-
-    ' For each OneDrive root, try to build a candidate local path.
-    ' The URL path typically contains a folder segment that mirrors the local tree.
-    ' Strategy: walk from the deepest URL segment upward and look for a matching local folder.
-    For i = 0 To 2
-        localRoot = envVars(i)
-        If Len(localRoot) = 0 Then GoTo NextVar
-
-        ' Attempt: localRoot + last N segments of urlPath
-        Dim parts() As String
-        Dim j As Long
-        parts = Split(urlPath, "\")
+    For Each root In roots
         For j = 0 To UBound(parts)
-            Dim seg As String
-            seg = parts(j)
-            Dim k As Long
+            suffix = parts(j)
             For k = j + 1 To UBound(parts)
-                seg = seg & "\" & parts(k)
+                suffix = suffix & sep & parts(k)
             Next k
-            candidate = localRoot & "\" & seg
-            If Len(Dir(candidate, vbDirectory)) > 0 Then
+            candidate = root & sep & suffix
+            If FolderExists(candidate) Then
                 ResolveLocalPath = candidate
                 Exit Function
             End If
         Next j
-
-NextVar:
-    Next i
+    Next root
 
     ' Could not resolve
     ResolveLocalPath = ""
 End Function
 
+'=========================================================
+' Local folders where OneDrive syncs files on this computer
+'=========================================================
+Private Function OneDriveLocalRoots() As Collection
+    Dim roots As New Collection
+
+#If Mac Then
+    Dim homeDir As String
+    Dim p As Long
+
+    ' Sandboxed Excel reports its own container as HOME; trim back to the user's home
+    homeDir = Environ("HOME")
+    p = InStr(homeDir, "/Library/Containers/")
+    If p > 0 Then homeDir = Left$(homeDir, p - 1)
+
+    ' Current OneDrive for Mac: ~/Library/CloudStorage/OneDrive-<Personal or Org>
+    ' Sandboxed Excel must be granted access before it can look inside (asked once).
+    #If MAC_OFFICE_VERSION >= 15 Then
+    On Error Resume Next
+    GrantAccessToMultipleFiles Array(homeDir & "/Library/CloudStorage")
+    On Error GoTo 0
+    #End If
+    AddOneDriveFolders roots, homeDir & "/Library/CloudStorage/"
+    ' Older OneDrive for Mac: ~/OneDrive, ~/OneDrive - <Org>
+    AddOneDriveFolders roots, homeDir & "/"
+#Else
+    Dim v As Variant
+    For Each v In Array("OneDriveCommercial", "OneDriveConsumer", "OneDrive")
+        If Len(Environ$(CStr(v))) > 0 Then roots.Add Environ$(CStr(v))
+    Next v
+#End If
+
+    Set OneDriveLocalRoots = roots
+End Function
+
+' Adds every folder directly inside baseDir whose name starts with "OneDrive".
+' baseDir must end with a path separator. Fails quietly if the folder can't be read.
+Private Sub AddOneDriveFolders(ByVal roots As Collection, ByVal baseDir As String)
+    Dim nm As String
+
+    On Error Resume Next
+    nm = Dir(baseDir, vbDirectory)
+    Do While Len(nm) > 0
+        If LCase$(Left$(nm, 8)) = "onedrive" Then
+            If FolderExists(baseDir & nm) Then roots.Add baseDir & nm
+        End If
+        nm = vbNullString
+        nm = Dir()
+    Loop
+    On Error GoTo 0
+End Sub
+
+Private Function FolderExists(ByVal folderPath As String) As Boolean
+    On Error Resume Next
+    FolderExists = ((GetAttr(folderPath) And vbDirectory) = vbDirectory)
+    On Error GoTo 0
+End Function
